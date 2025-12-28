@@ -16,13 +16,23 @@ class StrategyEngine:
             return 0.0
         return to_call / (pot_total + to_call)
 
-    def estimate_equity(self, hero_hand: list[str], board: list[str], simulations=1000) -> float:
+    def estimate_equity(self, hero_hand: list[str], board: list[str], villain_position: str, simulations=1000) -> float:
         """
-        Estimates equity by simulating the remaining streets against a random hand.
+        Estimates equity by simulating Hero vs Villain RANGE.
         """
-        # Convert hero cards and board to treys format
+        # 1. Setup Hero and Board
         hero_cards_int = [Card.new(c) for c in hero_hand]
         board_cards_int = [Card.new(c) for c in board]
+        known_cards = set(hero_cards_int + board_cards_int)
+
+        # 2. Get Villain Range (The Professional Upgrade)
+        range_strs = self.opponent_model.get_range_list(villain_position)
+        villain_combos = self.opponent_model.parse_range(range_strs)
+
+        if not villain_combos:
+            # Fallback to random if range is empty/unknown
+            # This happens if our parser misses something or position is weird
+            villain_combos = None
 
         wins = 0
         ties = 0
@@ -30,19 +40,45 @@ class StrategyEngine:
         for _ in range(simulations):
             deck = Deck()
             full_deck = deck.GetFullDeck()
-            # Remove known cards (inefficient but safe for MVP)
-            known = set(hero_cards_int + board_cards_int)
-            remaining_deck = [c for c in full_deck if c not in known]
-            random.shuffle(remaining_deck)
 
-            # Villain Hand (Random for now, could use OpponentModel ranges in future)
-            villain_hand = [remaining_deck.pop(), remaining_deck.pop()]
+            # 3. Select Villain Hand
+            villain_hand = []
+
+            if villain_combos:
+                # Filter combos that are impossible (card overlap with Hero/Board)
+                valid_combos = [
+                    c for c in villain_combos
+                    if c[0] not in known_cards and c[1] not in known_cards
+                ]
+
+                if valid_combos:
+                    villain_hand = random.choice(valid_combos)
+                else:
+                    # If all combos blocked (rare), take random
+                    pass
+
+            if not villain_hand:
+                # Random hand fallback
+                remaining_deck = [c for c in full_deck if c not in known_cards]
+                random.shuffle(remaining_deck)
+                villain_hand = [remaining_deck.pop(), remaining_deck.pop()]
+
+            # 4. Runout
+            # Remove Villain cards from deck used for runout
+            # Note: valid_combos logic ensures no overlap with hero/board.
+            # But we need to ensure runout doesn't pick villain cards.
+
+            used_cards = set(known_cards)
+            used_cards.add(villain_hand[0])
+            used_cards.add(villain_hand[1])
+
+            runout_deck = [c for c in full_deck if c not in used_cards]
+            random.shuffle(runout_deck)
 
             cards_needed = 5 - len(board_cards_int)
             runout = []
             if cards_needed > 0:
-                for _ in range(cards_needed):
-                    runout.append(remaining_deck.pop())
+                runout = runout_deck[:cards_needed]
 
             final_board = board_cards_int + runout
 
@@ -61,29 +97,41 @@ class StrategyEngine:
         """
         Core decision logic using GameTree search.
         """
-        # 1. Analyze Context
+        # 1. Identify Villain Position for Range Lookup
+        # We need to know WHICH villain we are fighting.
+        # MVP assumption: First active villain or the one who bet.
+        target_villain_pos = "BTN" # Default
+        if context.villains:
+            target_villain_pos = context.villains[0].position
+
+        # 2. Analyze Context
         if context.hero.cards:
-             equity = self.estimate_equity(context.hero.cards, context.board, simulations=500)
+             equity = self.estimate_equity(
+                 context.hero.cards,
+                 context.board,
+                 target_villain_pos,
+                 simulations=500
+             )
         else:
              equity = 0.0
 
-        # 2. Generate Options
+        # 3. Generate Options
         candidates = self.game_tree.generate_candidate_actions(context)
 
-        # 3. Evaluate Options
+        # 4. Evaluate Options
         best_decision = None
         best_ev = -float('inf')
 
         for decision in candidates:
+            # Pass equity to tree evaluator
             ev = self.game_tree.evaluate_node(decision, context, equity)
             decision.ev_estimation = ev
-            decision.reasoning = f"Simulated EV: {ev:.2f} (Equity: {equity:.2f})"
+            decision.reasoning = f"EV: {ev:.2f} (Eq: {equity:.2f} vs {target_villain_pos} Range)"
 
             if ev > best_ev:
                 best_ev = ev
                 best_decision = decision
 
-        # Fallback if empty (shouldn't happen)
         if not best_decision:
             return Decision(action="FOLD", amount=0, reasoning="No valid moves found.")
 

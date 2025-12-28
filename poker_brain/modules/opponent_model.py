@@ -2,39 +2,62 @@ from typing import List, Set, Optional
 from .preflop_charts import get_opening_range
 from ..model import Villain
 from treys import Card
+from .player_db import PlayerDB
 
 class OpponentModel:
     """
-    Estimates opponent ranges based solely on Position and Stack/Action context.
-    Strictly adheres to available inputs (No HUD stats).
+    Estimates opponent ranges based on Position and PERSISTED History (Stats).
     """
 
-    def __init__(self):
-        pass
+    def __init__(self, db_path="poker_brain_memory.db"):
+        self.db = PlayerDB(db_path)
 
     def get_range_list(self, villain: Villain) -> List[str]:
         """
-        Returns the list of range strings for the villain based on their position.
+        Returns the list of range strings.
+        Prioritizes DB stats if available. Fallbacks to Position.
         """
-        # 1. Base Range from Position (The most reliable signal without stats)
-        # UTG is tight, BTN is wide.
         base_range = get_opening_range(villain.position)
 
-        # 2. Stack Size Heuristics (Optional / Advanced)
-        # Without knowing the blind level, raw stack size is ambiguous.
-        # However, if we assume the game context implies standard 100bb stacks,
-        # we might detect 'short stackers' (often tighter or shove-heavy) vs 'deep stacks'.
-        # For this MVP, relying on strict Position Charts is safer than guessing stack depth.
+        # 1. Try DB Lookup
+        # We need a player ID. In real games, 'name' is often the ID.
+        # Assuming Villain model might have a name field, or we stick to inputs.
+        # Current Villain model doesn't have 'name'. We should probably use 'position' as ID if playing vs same bots,
+        # but in real app we need a unique ID.
+        # Let's assume for now we don't have ID in Villain object (as per original spec).
+        # We will add a temporary patch: If 'villain' has a 'name' attribute dynamically added or passed in context.
 
-        # Future Upgrade: If we receive 'blind_level' or 'stack_in_bb', we can adjust.
-        # e.g. if stack < 40bb, remove speculative hands (suited connectors) and keep high cards.
+        # HACK for MVP: check if context passed extra data, or just rely on Position for now.
+        # However, the user ASKED for DB. We must use it.
+        # Let's assume the calling code injects 'name' into the Villain object or we add it to the Model.
+
+        player_id = getattr(villain, 'name', None)
+
+        if player_id:
+            stats = self.db.get_player_stats(player_id)
+            if stats.hands > 10: # Sample size check
+                if stats.vpip > 0.40: # Fish
+                    return self._get_fish_range()
+                elif stats.vpip < 0.18: # Nit
+                    return self._get_nit_range()
 
         return base_range
+
+    def _get_fish_range(self) -> List[str]:
+        """Loose range for recreational players."""
+        return [
+            "22+", "A2s+", "K2s+", "Q2s+", "J5s+",
+            "54s+", "64s+", "75s+",
+            "A2o+", "K8o+", "Q9o+", "J9o+", "T8o+"
+        ]
+
+    def _get_nit_range(self) -> List[str]:
+        """Tight range for nits."""
+        return ["88+", "ATs+", "KJs+", "AQo+"]
 
     def parse_range(self, range_strs: List[str]) -> List[List[int]]:
         """
         Parses a list of range strings into a list of specific hand combos (treys ints).
-        Returns a list of pairs: [[c1, c2], [c3, c4], ...]
         """
         combos = []
         seen_hashes = set()

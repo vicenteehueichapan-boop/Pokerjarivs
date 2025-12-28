@@ -18,7 +18,8 @@ class Villain:
     status: str  # "ACTIVE", "FOLDED", "ALLIN"
     stack: float
     current_investment: float
-    stats: Optional[dict] = field(default_factory=dict) # e.g. {"vpip": 0.25}
+    name: Optional[str] = None # Added for DB persistence
+    stats: Optional[dict] = field(default_factory=dict)
 
 @dataclass
 class GameContext:

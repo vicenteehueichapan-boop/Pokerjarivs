@@ -19,13 +19,12 @@ class StrategyEngine:
     def estimate_equity(self, hero_hand: list[str], board: list[str], villain: Villain, simulations=1000) -> float:
         """
         Estimates equity by simulating Hero vs Villain RANGE.
+        Uses Phevaluator via self.evaluator for speed.
         """
-        # 1. Setup Hero and Board
         hero_cards_int = [Card.new(c) for c in hero_hand]
         board_cards_int = [Card.new(c) for c in board]
         known_cards = set(hero_cards_int + board_cards_int)
 
-        # 2. Get Villain Range (The Professional Upgrade)
         range_strs = self.opponent_model.get_range_list(villain)
         villain_combos = self.opponent_model.parse_range(range_strs)
 
@@ -39,8 +38,8 @@ class StrategyEngine:
             deck = Deck()
             full_deck = deck.GetFullDeck()
 
-            # 3. Select Villain Hand
-            villain_hand = []
+            # Select Villain Hand
+            villain_hand_int = []
 
             if villain_combos:
                 valid_combos = [
@@ -49,32 +48,39 @@ class StrategyEngine:
                 ]
 
                 if valid_combos:
-                    villain_hand = random.choice(valid_combos)
+                    villain_hand_int = random.choice(valid_combos)
                 else:
                     pass
 
-            if not villain_hand:
+            if not villain_hand_int:
                 remaining_deck = [c for c in full_deck if c not in known_cards]
                 random.shuffle(remaining_deck)
-                villain_hand = [remaining_deck.pop(), remaining_deck.pop()]
+                villain_hand_int = [remaining_deck.pop(), remaining_deck.pop()]
 
-            # 4. Runout
+            # Runout
             used_cards = set(known_cards)
-            used_cards.add(villain_hand[0])
-            used_cards.add(villain_hand[1])
+            used_cards.add(villain_hand_int[0])
+            used_cards.add(villain_hand_int[1])
 
             runout_deck = [c for c in full_deck if c not in used_cards]
             random.shuffle(runout_deck)
 
             cards_needed = 5 - len(board_cards_int)
-            runout = []
+            runout_int = []
             if cards_needed > 0:
-                runout = runout_deck[:cards_needed]
+                runout_int = runout_deck[:cards_needed]
 
-            final_board = board_cards_int + runout
+            # Evaluate
+            final_board_int = board_cards_int + runout_int
 
-            hero_score = self.evaluator.evaluator.evaluate(final_board, hero_cards_int)
-            villain_score = self.evaluator.evaluator.evaluate(final_board, villain_hand)
+            board_strs = [Card.int_to_str(c) for c in final_board_int]
+            villain_hand_strs = [Card.int_to_str(c) for c in villain_hand_int]
+
+            hero_final_strs = hero_hand + board_strs
+            villain_final_strs = villain_hand_strs + board_strs
+
+            hero_score = self.evaluator.evaluate_hand([], hero_final_strs)
+            villain_score = self.evaluator.evaluate_hand([], villain_final_strs)
 
             if hero_score < villain_score:
                 wins += 1
@@ -85,13 +91,8 @@ class StrategyEngine:
         return equity
 
     def make_decision(self, context: GameContext) -> Decision:
-        """
-        Core decision logic using GameTree search.
-        """
-        # 1. Identify Villain
         target_villain = context.villains[0] if context.villains else Villain("BTN", "ACTIVE", 100, 0)
 
-        # 2. Analyze Context
         if context.hero.cards:
              equity = self.estimate_equity(
                  context.hero.cards,
@@ -102,17 +103,15 @@ class StrategyEngine:
         else:
              equity = 0.0
 
-        # 3. Generate Options
         candidates = self.game_tree.generate_candidate_actions(context)
 
-        # 4. Evaluate Options
         best_decision = None
         best_ev = -float('inf')
 
         for decision in candidates:
             ev = self.game_tree.evaluate_node(decision, context, equity)
             decision.ev_estimation = ev
-            decision.reasoning = f"EV: {ev:.2f} (Eq: {equity:.2f} vs {target_villain.position} Range)"
+            decision.reasoning = f"EV: {ev:.2f} (Eq: {equity:.2f} vs {target_villain.position})"
 
             if ev > best_ev:
                 best_ev = ev

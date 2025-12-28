@@ -1,2 +1,5 @@
 treys
 phevaluator
+sqlalchemy
+pokerkit
+numpy

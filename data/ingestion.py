@@ -9,6 +9,16 @@ class HandHistoryImporter:
         self.session = session
 
     def ingest_hand_text(self, hh_text: str):
+        """
+        Parses raw hand history text and populates the DB.
+        NOTE: This is a stub for specific site parsers (PokerStars, GG).
+        Real implementation would use regex or pokerkit.HandHistory.from_text
+        to iterate over actions and call self.record_action().
+        """
+        # Example pseudo-code for future implementation:
+        # hh = pokerkit.HandHistory.load(hh_text)
+        # for action in hh.actions:
+        #     self.record_action(...)
         pass
 
     def _get_or_create_player(self, name: str) -> DimPlayer:
@@ -16,7 +26,6 @@ class HandHistoryImporter:
         if player:
             return player
 
-        # Try to create
         try:
             player = DimPlayer(player_name_hash=name, cluster_type="Unknown")
             self.session.add(player)
@@ -24,7 +33,6 @@ class HandHistoryImporter:
             return player
         except IntegrityError:
             self.session.rollback()
-            # Race condition hit, someone else created it. Query again.
             return self.session.query(DimPlayer).filter_by(player_name_hash=name).one()
 
     def record_action(self, hand_id: str, player_name: str, street: int, action: str, amount: float, pot: float):
